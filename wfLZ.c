@@ -41,7 +41,7 @@
 // number of bytes required = WFLZ_DICTSIZE*sizeof( wfLZ_DictEntry )
 // raising this can increase compression ratio slightly, but has a huge impact on the amount of working memory required
 // the default value (0xffffU) requires 256KB working memory
-#define WFLZ_DICT_SIZE               0xfffffU
+#define WFLZ_DICT_SIZE               0xffffU
 
 // when using ChunkCompress() each block will be aligned to this -- makes PS3 SPU transfer convenient
 #define WFLZ_CHUNK_PAD               256
@@ -114,7 +114,7 @@ void wfLZ_EndianSwap32( uint32_t* data ) { *data = ( (*data & 0xFF000000) >> 24 
 	#define WF_LZ_DBG_COMPRESS_FAST_INIT FILE* dbgFh = fopen( "c:/dev/compress-fast.txt", "wb" );
 	#define WF_LZ_DBG_COMPRESS_INIT      FILE* dbgFh = fopen( "c:/dev/compress.txt", "wb" );
 	#define WF_LZ_DBG_DECOMPRESS_INIT    FILE* dbgFh = fopen( "c:/dev/decompress.txt", "wb" );
-	#define WF_LZ_DBG( ... )             fprintf( dbgFh, __VA_ARGS__ )
+	#define WF_LZ_DBG( ... )             fprintf( dbgFh, __VA_ARGS__ ); fflush( dbgFh );
 	#define WF_LZ_DBG_SHUTDOWN           fclose( dbgFh );
 #else
 	#define WF_LZ_DBG_COMPRESS_FAST_INIT
@@ -175,7 +175,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 	header.decompressedSize = inSize;
 
 	// init dictionary
-	wfLZ_MemSet( ( uint8_t* )dict, 0, sizeof( wfLZ_DictEntry ) * WFLZ_DICT_SIZE );
+	wfLZ_MemSet( ( uint8_t* )dict, 0, wfLZ_GetWorkMemSize() );
 
 	// starting literal characters
 	{
@@ -186,7 +186,8 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 			++src, ++dst, --bytesLeft
 		)
 		{
-			const uint32_t hash = WFLZ_HASHPTR( src );
+			uint32_t hash = WFLZ_HASHPTR( src );
+			if( hash == WFLZ_DICT_SIZE ) --hash;
 			dict[ hash ].inPos = src;
 			*dst = *src;
 			WF_LZ_DBG( "  literal [0x%02X] [%c]\n", *src, *src );
@@ -205,6 +206,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 			const uint32_t maxMatchLen = WFLZ_MAX_MATCH_LEN > bytesLeft ? bytesLeft : WFLZ_MAX_MATCH_LEN ;
 			if( hash == WFLZ_DICT_SIZE ) --hash;
 			matchPos = dict[ hash ].inPos;
+
 			dict[ hash ].inPos = src;
 
 			// a match was found, figure ensure it really is a match (not a hash collision), and determine its length
@@ -259,6 +261,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 		block->numLiterals = ( uint8_t )numLiterals;
 		if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
 		block = ( wfLZ_Block* )dst;
+		dst += WFLZ_BLOCK_SIZE;
 		block->dist = block->length = block->numLiterals = 0;
 		header.compressedSize += WFLZ_BLOCK_SIZE;
 	}
@@ -273,7 +276,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 
 	WF_LZ_DBG_SHUTDOWN
 
-	return header.compressedSize + sizeof( wfLZ_Header );
+	return dst - out + sizeof( wfLZ_Header );
 }
 
 //! wfLZ_Compress()
@@ -316,7 +319,8 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 			++dst, ++src, --bytesLeft, ++header.compressedSize, ++numLiterals
 		)
 		{
-			const uint32_t hash = WFLZ_HASHPTR( src );
+			uint32_t hash = WFLZ_HASHPTR( src );
+			if( hash == WFLZ_DICT_SIZE ) --hash;
 			dict[ hash ].inPos = src;
 			*dst = *src;
 			WF_LZ_DBG( "  literal [0x%02X] [%c]\n", *src, *src );
@@ -407,6 +411,7 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 		block->numLiterals = ( uint8_t )numLiterals;
 		if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
 		block = ( wfLZ_Block* )dst;
+		dst += WFLZ_BLOCK_SIZE;
 		block->dist = block->length = block->numLiterals = 0;
 		header.compressedSize += WFLZ_BLOCK_SIZE;
 	}
@@ -421,7 +426,7 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 
 	WF_LZ_DBG_SHUTDOWN
 
-	return header.compressedSize + sizeof( wfLZ_Header );
+	return dst - out + sizeof( wfLZ_Header );
 }
 
 //! wfLZ_GetDecompressedSize()
@@ -642,6 +647,8 @@ uint8_t* wfLZ_ChunkDecompressLoop( uint8_t* in, uint32_t** chunkDesc )
 
 /*!
 Utility functions below, not exposed publicly
+
+Thanks Daniel A. Newby (Corwinoid) for optimizing these!
 */
 
 //! wfLZ_MemCmp()
@@ -657,7 +664,6 @@ uint32_t wfLZ_MemCmp( const uint8_t* a, const uint8_t* b, const uint32_t maxLen 
 	return matched;
 }
 #else // this depends on unaligned access, but it is only called during Compress() which has other issues on CPUs that care
-// Thanks Daniel A. Newby (Corwinoid) for optimizing these
 uint32_t wfLZ_MemCmp_i( const uint32_t* a, const uint32_t* b, const uint32_t count, const uint32_t maxLen )
 {
 	if( count >= maxLen ) return maxLen;
@@ -684,8 +690,20 @@ DO NOT just try to replace this with standard memcpy! this must allow src and ds
 
 void wfLZ_MemCpy( uint8_t* dst, const uint8_t* src, const uint32_t size )
 {
+#if 0
 	uint32_t i;
 	for( i = 0; i != size; ++i ) *dst++ = *src++;
+#else
+	int32_t n = (size+3) / 4;
+	switch( size % 4 )
+	{
+		case 0: do {    *dst++ = *src++;
+		case 3:         *dst++ = *src++;
+		case 2:         *dst++ = *src++;
+		case 1:         *dst++ = *src++;
+		} while(--n > 0);
+	}
+#endif
 }
 
 //! wfLZ_MemSet()
