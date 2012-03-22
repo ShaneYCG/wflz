@@ -649,12 +649,33 @@ Utility functions below, not exposed publicly
 Deceptively named: the return value of this is *not* like strcmp/memcmp() -- it's just the number of sequential matching bytes, not some kind of diff
 */
 
+#if 0
 uint32_t wfLZ_MemCmp( const uint8_t* a, const uint8_t* b, const uint32_t maxLen )
 {
 	uint32_t matched = 0;
 	while( *a++ == *b++ && matched < maxLen ) ++matched;
 	return matched;
 }
+#else // this depends on unaligned access, but it is only called during Compress() which has other issues on CPUs that care
+// Thanks Daniel A. Newby (Corwinoid) for optimizing these
+uint32_t wfLZ_MemCmp_i( const uint32_t* a, const uint32_t* b, const uint32_t count, const uint32_t maxLen )
+{
+	if( count >= maxLen ) return maxLen;
+	if( *a != *b )
+	{
+		uint32_t n = 0;
+		uint8_t *i = (uint8_t*)a, *j = (uint8_t*)b;
+		while( *i++ == *j++ && count + n < maxLen ) ++n;
+		return count + n;
+	}
+	return wfLZ_MemCmp_i( ++a, ++b, count + 4, maxLen );
+}
+ 
+uint32_t wfLZ_MemCmp( const uint8_t* a, const uint8_t* b, const uint32_t maxLen )
+{
+	return wfLZ_MemCmp_i( (uint32_t*)a, (uint32_t*)b, 0, maxLen );
+}
+#endif
 
 //! wfLZ_MemCpy()
 /*!
