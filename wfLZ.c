@@ -490,9 +490,9 @@ void wfLZ_Decompress( const uint8_t* const in, uint8_t* const out )
 
 WF_LZ_LITERALS:
 	#if 1
-		--numLiterals;
 		WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
 		*dst++ = *src++;
+		--numLiterals;
 		if( numLiterals ) goto WF_LZ_LITERALS;
 	#else	// good if lots of uncompressible data, but there usually isn't
 		wfLZ_MemCpy( dst, src, numLiterals );
