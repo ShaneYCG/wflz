@@ -7,6 +7,7 @@
 // TODO: tuning docs! explanations here are good but give little idea how much each variable matters
 
 // lowers the overhead imposed by compression meta-data a bit at the cost of significantly limiting the maximum match distance (beneficial if compressed data is <=4KB -- maybe make this automatic?)
+// this is not compatible with endian swapping and probably not with unaligned reads
 //#define WFLZ_SHORT_WINDOW
 
 // some of these variables are limited by the types they are stored in, be careful if tweaking
@@ -107,20 +108,25 @@ void wfLZ_EndianSwap32( uint32_t* data ) { *data = ( (*data & 0xFF000000) >> 24 
 	#define NULL 0
 #endif
 
-//#define WFLZ_DBG	// writes compression and decompression logs -- if everything is working, these should match!
+//#define WF_LZ_DBG	// writes compression and decompression logs -- if everything is working, these should match!
 
-#ifdef WFLZ_DBG
+#ifdef WF_LZ_DBG
 	#include <stdio.h>
 	#define WF_LZ_DBG_COMPRESS_FAST_INIT FILE* dbgFh = fopen( "c:/dev/compress-fast.txt", "wb" );
 	#define WF_LZ_DBG_COMPRESS_INIT      FILE* dbgFh = fopen( "c:/dev/compress.txt", "wb" );
 	#define WF_LZ_DBG_DECOMPRESS_INIT    FILE* dbgFh = fopen( "c:/dev/decompress.txt", "wb" );
-	#define WF_LZ_DBG( ... )             fprintf( dbgFh, __VA_ARGS__ ); fflush( dbgFh );
+	#define WF_LZ_DBG_PRINT( ... )       fprintf( dbgFh, __VA_ARGS__ ); fflush( dbgFh );
 	#define WF_LZ_DBG_SHUTDOWN           fclose( dbgFh );
+
+	// may as well collect some stats while we're here...
+	uint64_t wfLZ_totalBackTrackDist = 0;
+	uint64_t wfLZ_totalBackTrackLength = 0;
+	uint64_t wfLZ_numBackTracks = 0;
 #else
 	#define WF_LZ_DBG_COMPRESS_FAST_INIT
 	#define WF_LZ_DBG_COMPRESS_INIT
 	#define WF_LZ_DBG_DECOMPRESS_INIT
-	#define WF_LZ_DBG( ... )
+	#define WF_LZ_DBG_PRINT( ... )
 	#define WF_LZ_DBG_SHUTDOWN
 #endif
 
@@ -164,7 +170,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 
 	WF_LZ_DBG_COMPRESS_FAST_INIT
 
-	WF_LZ_DBG( "wfLZ_CompressFast( %u )\n", inSize );
+	WF_LZ_DBG_PRINT( "wfLZ_CompressFast( %u )\n", inSize );
 
 	// init header
 	header.sig[0] = 'W';
@@ -190,7 +196,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 			if( hash == WFLZ_DICT_SIZE ) --hash;
 			dict[ hash ].inPos = src;
 			*dst = *src;
-			WF_LZ_DBG( "  literal [0x%02X] [%c]\n", *src, *src );
+			WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
 		}
 		numLiterals = src - in;
 	}
@@ -228,7 +234,13 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 				block->length = ( uint8_t )( matchLength - WFLZ_MIN_MATCH_LEN + 1 );
 				numLiterals = 0;
 
-				WF_LZ_DBG( "  backtrack [%u] len [%u]\n", matchDist, matchLength );
+				WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", matchDist, matchLength );
+				#ifdef WF_LZ_DBG
+					wfLZ_totalBackTrackDist += matchDist;
+					wfLZ_totalBackTrackLength += matchLength;
+					++wfLZ_numBackTracks;
+				#endif
+
 				header.compressedSize += WFLZ_BLOCK_SIZE;
 			}
 
@@ -249,7 +261,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 
 				++numLiterals;
 				--bytesLeft;
-				WF_LZ_DBG( "  literal [0x%02X] [%c]\n", *src, *src );
+				WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
 				*dst++ = *src++;
 				++header.compressedSize;
 			}
@@ -291,13 +303,9 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 	uint32_t numLiterals = 0;
 	wfLZ_DictEntry* dict = dict = ( wfLZ_DictEntry* )workMem;
 
-	#ifdef WFLZ_SHORT_WINDOW
-		if( swapEndian != 0 ) { abort(); } // endian swapping stuffs not set up for bit fields
-	#endif
-
 	WF_LZ_DBG_COMPRESS_INIT
 
-	WF_LZ_DBG( "wfLZ_Compress( %u )\n", inSize );
+	WF_LZ_DBG_PRINT( "wfLZ_Compress( %u )\n", inSize );
 
 	// init header
 	header.sig[0] = 'W';
@@ -323,7 +331,7 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 			if( hash == WFLZ_DICT_SIZE ) --hash;
 			dict[ hash ].inPos = src;
 			*dst = *src;
-			WF_LZ_DBG( "  literal [0x%02X] [%c]\n", *src, *src );
+			WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
 		}
 	}
 
@@ -380,7 +388,12 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 			block->dist = ( uint16_t )bestMatchDist;
 			block->length = ( uint8_t )( bestMatchLen - WFLZ_MIN_MATCH_LEN + 1 );
 			numLiterals = 0;
-			WF_LZ_DBG( "  backtrack [%u] len [%u]\n", bestMatchDist, bestMatchLen );
+			WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", bestMatchDist, bestMatchLen );
+			#ifdef WF_LZ_DBG
+				wfLZ_totalBackTrackDist += bestMatchDist;
+				wfLZ_totalBackTrackLength += bestMatchLen;
+				++wfLZ_numBackTracks;
+			#endif
 			header.compressedSize += WFLZ_BLOCK_SIZE;
 		}
 		// otherwise, output a literal byte
@@ -400,7 +413,7 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 
 			++numLiterals;
 			--bytesLeft;
-			WF_LZ_DBG( "  literal [0x%02X] [%c]\n", *src, *src );
+			WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
 			*dst++ = *src++;
 			++header.compressedSize;
 		}
@@ -470,32 +483,39 @@ void wfLZ_Decompress( const uint8_t* const in, uint8_t* const out )
 	const uint8_t* src = in + sizeof( wfLZ_Header );
 	uint8_t numLiterals = header->firstBlock.numLiterals;
 	wfLZ_Block* block;
-	uint32_t dist, len;
-	uint16_t tmp;
+	uint16_t dist, len;
 
 	WF_LZ_DBG_DECOMPRESS_INIT
-	WF_LZ_DBG( "wfLZ_Decompress()\n" );
+	WF_LZ_DBG_PRINT( "wfLZ_Decompress()\n" );
 
 WF_LZ_LITERALS:
-	--numLiterals;
-	WF_LZ_DBG( "  literal [0x%02X] [%c]\n", *src, *src );
-	*dst++ = *src++;
-	if( numLiterals ) goto WF_LZ_LITERALS;
+	#if 1
+		--numLiterals;
+		WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
+		*dst++ = *src++;
+		if( numLiterals ) goto WF_LZ_LITERALS;
+	#else	// good if lots of uncompressible data, but there usually isn't
+		wfLZ_MemCpy( dst, src, numLiterals );
+		src += numLiterals;
+		dst += numLiterals;
+	#endif
 
 WF_LZ_BLOCK:
 	block = ( wfLZ_Block* )src;
 	numLiterals = block->numLiterals;
-	//dist = ( uint32_t )block->dist;
-	( (uint8_t*)&tmp )[ 0 ] = ( (uint8_t*)&block->dist )[ 0 ]; // compensate for unaligned reads of a u16 (will work on x86, but some PPC variants are picky)
-	( (uint8_t*)&tmp )[ 1 ] = ( (uint8_t*)&block->dist )[ 1 ];
-	dist = ( uint32_t )tmp;
-	len = ( uint32_t )block->length;
+	#ifdef SPU // compensate for unaligned u16 reads
+		( (uint8_t*)&dist )[ 0 ] = ( (uint8_t*)&block->dist )[ 0 ];
+		( (uint8_t*)&dist )[ 1 ] = ( (uint8_t*)&block->dist )[ 1 ];
+	#else
+		dist = block->dist;
+	#endif
+	len = ( uint16_t )block->length;
 
 	if( len != 0 )
 	{
 		len += WFLZ_MIN_MATCH_LEN - 1;
-		WF_LZ_DBG( "  backtrack [%u] len [%u]\n", block->dist, len );
-		wfLZ_MemCpy( dst, dst - block->dist, len );
+		WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", dist, len );
+		wfLZ_MemCpy( dst, dst - dist, len );
 		dst += len;
 	}
 	src += WFLZ_BLOCK_SIZE;
@@ -540,6 +560,7 @@ uint32_t wfLZ_GetMaxChunkCompressedSize( const uint32_t inSize, const uint32_t b
 }
 
 //! LZC_ChunkCompress()
+
 uint32_t wfLZ_ChunkCompress( uint8_t* in, const uint32_t inSize, const uint32_t blockSize, uint8_t* out, const uint8_t* workMem, const uint32_t swapEndian, const uint32_t useFastCompress )
 {
 	wfLZ_HeaderChunked* header;
@@ -684,9 +705,6 @@ uint32_t wfLZ_MemCmp( const uint8_t* a, const uint8_t* b, const uint32_t maxLen 
 #endif
 
 //! wfLZ_MemCpy()
-/*!
-DO NOT just try to replace this with standard memcpy! this must allow src and dst to overlap!
-*/
 
 void wfLZ_MemCpy( uint8_t* dst, const uint8_t* src, const uint32_t size )
 {
