@@ -712,10 +712,14 @@ void wfLZ_MemCpy( uint8_t* dst, const uint8_t* src, const uint32_t size )
 	uint32_t i;
 	for( i = 0; i != size; ++i ) *dst++ = *src++;
 #else
-	int32_t n = (size+3) / 4;
-	switch( size % 4 )
+	int32_t n = (size+7) / 8;
+	switch( size % 8 )
 	{
 		case 0: do {    *dst++ = *src++;
+		case 7:         *dst++ = *src++;
+		case 6:         *dst++ = *src++;
+		case 5:         *dst++ = *src++;
+		case 4:         *dst++ = *src++;
 		case 3:         *dst++ = *src++;
 		case 2:         *dst++ = *src++;
 		case 1:         *dst++ = *src++;
