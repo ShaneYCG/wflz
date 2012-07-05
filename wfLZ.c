@@ -162,7 +162,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 	const uint8_t* src = in;
 	uint32_t bytesLeft = inSize;
 	uint32_t numLiterals;
-	wfLZ_DictEntry* dict = dict = ( wfLZ_DictEntry* )workMem;
+	wfLZ_DictEntry* dict = ( wfLZ_DictEntry* )workMem;
 
 	#ifdef WFLZ_SHORT_WINDOW
 		if( swapEndian != 0 ) { abort(); } // endian swapping stuffs not set up for bit fields
@@ -605,7 +605,7 @@ uint32_t wfLZ_ChunkCompress( uint8_t* in, const uint32_t inSize, const uint32_t 
 	header->sig[3]           = 'W';
 	header->decompressedSize = inSize;
 	header->numChunks        = numChunks;
-	header->compressedSize   = totalCompressedSize;
+	header->compressedSize   = totalCompressedSize - sizeof( wfLZ_HeaderChunked );
 	if( swapEndian != 0 )
 	{
 		wfLZ_EndianSwap32( &header->decompressedSize );
@@ -633,12 +633,12 @@ uint32_t wfLZ_GetNumChunks( const uint8_t* const in )
 void wfLZ_ChunkDecompressCallback( uint8_t* in, void( *chunkCallback )( void* ) )
 {
 	uint32_t chunkIdx;
-	wfLZ_ChunkDesc* chunk;
+	//wfLZ_ChunkDesc* chunk;
 	wfLZ_HeaderChunked* header = ( wfLZ_HeaderChunked* )in;
 	const uint32_t numChunks = header->numChunks;
 	in += sizeof( wfLZ_HeaderChunked );
 
-	chunk = ( wfLZ_ChunkDesc* )in;
+	//chunk = ( wfLZ_ChunkDesc* )in;
 	in += sizeof( wfLZ_ChunkDesc ) * numChunks;
 
 	for( chunkIdx = 0; chunkIdx != numChunks; ++chunkIdx )
@@ -729,6 +729,7 @@ void wfLZ_MemCpy( uint8_t* dst, const uint8_t* src, const uint32_t size )
 }
 
 //! wfLZ_MemSet()
+
 void wfLZ_MemSet( uint8_t* dst, const uint8_t value, const uint32_t size )
 {
 	uint32_t i;
