@@ -30,7 +30,7 @@
 	#define WFLZ_BLOCK_SIZE          4
 	#define WFLZ_MIN_MATCH_LEN       ( WFLZ_BLOCK_SIZE + 1 ) 
 	#define WFLZ_MAX_MATCH_LEN       ( 0xffU-1 ) + WFLZ_MIN_MATCH_LEN
-	#define WFLZ_MAX_MATCH_DIST      0xfffU
+	#define WFLZ_MAX_MATCH_DIST      0xffffU
 	#define WFLZ_MAX_MATCH_DIST_FAST 0xffffU
 #endif
 
@@ -45,7 +45,7 @@
 #define WFLZ_DICT_SIZE               0xffffU
 
 // when using ChunkCompress() each block will be aligned to this -- makes PS3 SPU transfer convenient
-#define WFLZ_CHUNK_PAD               256
+#define WFLZ_CHUNK_PAD               16
 
 //
 // End Config
@@ -301,7 +301,7 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 	const uint8_t* src = in;
 	uint32_t bytesLeft = inSize;
 	uint32_t numLiterals = 0;
-	wfLZ_DictEntry* dict = dict = ( wfLZ_DictEntry* )workMem;
+	wfLZ_DictEntry* dict = ( wfLZ_DictEntry* )workMem;
 
 	WF_LZ_DBG_COMPRESS_INIT
 
@@ -556,7 +556,13 @@ uint32_t wfLZ_GetHeaderSize( const uint8_t* const in )
 uint32_t wfLZ_GetMaxChunkCompressedSize( const uint32_t inSize, const uint32_t blockSize )
 {
 	const uint32_t numChunks = ( (inSize-1) / blockSize ) + 1;
-	return ( wfLZ_GetMaxCompressedSize( blockSize )+sizeof( wfLZ_ChunkDesc ) ) * numChunks + sizeof( wfLZ_HeaderChunked );
+	return
+		wfLZ_RoundUp( wfLZ_GetMaxCompressedSize( blockSize ), WFLZ_CHUNK_PAD )*numChunks
+		+
+		wfLZ_RoundUp( sizeof( wfLZ_ChunkDesc ) * numChunks, WFLZ_CHUNK_PAD )
+		+
+		sizeof( wfLZ_HeaderChunked )
+	;
 }
 
 //! LZC_ChunkCompress()
@@ -571,12 +577,9 @@ uint32_t wfLZ_ChunkCompress( uint8_t* in, const uint32_t inSize, const uint32_t 
 	uint32_t totalCompressedSize = 0;
 
 	header = ( wfLZ_HeaderChunked* )out;
-	out += sizeof( wfLZ_HeaderChunked );
-	totalCompressedSize += sizeof( wfLZ_HeaderChunked );
-
-	block = ( wfLZ_ChunkDesc* )out;
-	out += sizeof( wfLZ_ChunkDesc ) * numChunks;
-	totalCompressedSize += sizeof( wfLZ_ChunkDesc ) * numChunks;
+	block = ( wfLZ_ChunkDesc* )( out+sizeof( wfLZ_HeaderChunked ) );
+	totalCompressedSize += wfLZ_RoundUp( sizeof( wfLZ_HeaderChunked ) + sizeof( wfLZ_ChunkDesc )*numChunks, WFLZ_CHUNK_PAD );
+	out += totalCompressedSize;
 
 	for( bytesLeft = inSize; bytesLeft != 0; /**/ )
 	{

@@ -2,6 +2,10 @@
 #ifndef WF_LZ_H
 #define WF_LZ_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef _MSC_VER
 	#if _MSC_VER < 1300
 	   typedef signed   char  int8_t;
@@ -21,18 +25,9 @@
 	typedef signed   __int64 int64_t;
 	typedef unsigned __int64 uint64_t;
 #else
-#ifdef __cplusplus
-extern "C" {
-#endif
 	#include <stdint.h>
-#ifdef __cplusplus
-};
-#endif
 #endif
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 //! wfLZ_GetMaxCompressedSize()
 /*! Use this to figure out the maximum size for your compression buffer */
@@ -113,7 +108,7 @@ void wfLZ_ChunkDecompressCallback( uint8_t* in, void( *chunkCallback )( void* ) 
 uint8_t* wfLZ_ChunkDecompressLoop( uint8_t* in, uint32_t** chunkDesc );
 
 #ifdef __cplusplus
-};
+}
 #endif
 
 #endif // WF_LZ_H
