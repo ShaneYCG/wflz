@@ -164,6 +164,8 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 	uint32_t numLiterals;
 	wfLZ_DictEntry* dict = ( wfLZ_DictEntry* )workMem;
 
+	block->dist = block->length = 0;
+
 	#ifdef WFLZ_SHORT_WINDOW
 		if( swapEndian != 0 ) { abort(); } // endian swapping stuffs not set up for bit fields
 	#endif
@@ -288,7 +290,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 
 	WF_LZ_DBG_SHUTDOWN
 
-	return dst - out + sizeof( wfLZ_Header );
+	return dst - out;
 }
 
 //! wfLZ_Compress()
@@ -302,6 +304,8 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 	uint32_t bytesLeft = inSize;
 	uint32_t numLiterals = 0;
 	wfLZ_DictEntry* dict = ( wfLZ_DictEntry* )workMem;
+
+	block->dist = block->length = 0;
 
 	WF_LZ_DBG_COMPRESS_INIT
 
@@ -439,7 +443,7 @@ uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t*
 
 	WF_LZ_DBG_SHUTDOWN
 
-	return dst - out + sizeof( wfLZ_Header );
+	return dst - out;
 }
 
 //! wfLZ_GetDecompressedSize()
@@ -476,7 +480,7 @@ uint32_t wfLZ_GetCompressedSize( const uint8_t* const in )
 
 //! wfLZ_Decompress()
 
-void wfLZ_Decompress( const uint8_t* const in, uint8_t* const out )
+void wfLZ_Decompress( const uint8_t* WF_RESTRICT const in, uint8_t* WF_RESTRICT const out )
 {
 	wfLZ_Header* header = ( wfLZ_Header* )in;
 	uint8_t* dst = out;
@@ -579,15 +583,16 @@ uint32_t wfLZ_ChunkCompress( uint8_t* in, const uint32_t inSize, const uint32_t 
 	header = ( wfLZ_HeaderChunked* )out;
 	block = ( wfLZ_ChunkDesc* )( out+sizeof( wfLZ_HeaderChunked ) );
 	totalCompressedSize += wfLZ_RoundUp( sizeof( wfLZ_HeaderChunked ) + sizeof( wfLZ_ChunkDesc )*numChunks, WFLZ_CHUNK_PAD );
+	wfLZ_MemSet( out, 0, totalCompressedSize );
 	out += totalCompressedSize;
 
 	for( bytesLeft = inSize; bytesLeft != 0; /**/ )
 	{
 		const uint32_t decompressedSize = bytesLeft >= blockSize ? blockSize : bytesLeft ;
-		const uint32_t compressedSize = wfLZ_RoundUp(
-			useFastCompress == 0 ? wfLZ_Compress( in, decompressedSize, out, workMem, swapEndian ) : wfLZ_CompressFast( in, decompressedSize, out, workMem, swapEndian ),
-			WFLZ_CHUNK_PAD
-		);
+		uint32_t compressedSize = useFastCompress == 0 ? wfLZ_Compress( in, decompressedSize, out, workMem, swapEndian ) : wfLZ_CompressFast( in, decompressedSize, out, workMem, swapEndian );
+		uint32_t pad = wfLZ_RoundUp( compressedSize, WFLZ_CHUNK_PAD ) - compressedSize;
+		wfLZ_MemSet( out + compressedSize, 0, pad );
+		compressedSize += pad;
 		block->offset = totalCompressedSize;
 
 		if( swapEndian != 0 )

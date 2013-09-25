@@ -28,6 +28,9 @@ extern "C" {
 	#include <stdint.h>
 #endif
 
+#ifndef WF_RESTRICT
+	#define WF_RESTRICT
+#endif
 
 //! wfLZ_GetMaxCompressedSize()
 /*! Use this to figure out the maximum size for your compression buffer */
@@ -62,7 +65,7 @@ extern uint32_t wfLZ_GetCompressedSize( const uint8_t* const in );
 
 //! wfLZ_Decompress()
 /*! Use wfLZ_GetDecompressedSize to allocate an output buffer of the correct size */
-extern void wfLZ_Decompress( const uint8_t* const in, uint8_t* const out );
+extern void wfLZ_Decompress( const uint8_t* WF_RESTRICT const in, uint8_t* WF_RESTRICT const out );
 
 //! wfLZ_GetHeaderSize()
 /*!
@@ -112,3 +115,18 @@ uint8_t* wfLZ_ChunkDecompressLoop( uint8_t* in, uint32_t** chunkDesc );
 #endif
 
 #endif // WF_LZ_H
+
+//! Example Usage
+/*!
+
+uint8_t* workMem = ( uint8_t* )malloc( wfLZ_GetWorkMemSize() );
+uint8_t* compressed = ( uint8_t* )malloc( wfLZ_GetMaxCompressedSize( decompressedSize ) );
+uint32_t compressedSize = wfLZ_CompressFast( decompressed, decompressedSize, compressed, workMem, 0 );
+
+....
+
+uint32_t decompressedSize = wfLZ_GetDecompressedSize( compressed );
+uint8_t* decompressed = ( uint8_t* )malloc( decompressedSize );
+wfLZ_Decompress( compressed, decompressed );
+
+*/
