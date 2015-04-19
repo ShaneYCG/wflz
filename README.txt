@@ -1,4 +1,3 @@
-All source is licensed under the WTFPL (sam.zoy.org/wtfpl/).
 
 Random Notes:
 
