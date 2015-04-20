@@ -6,33 +6,11 @@
 
 // TODO: tuning docs! explanations here are good but give little idea how much each variable matters
 
-// lowers the overhead imposed by compression meta-data a bit at the cost of significantly limiting the maximum match distance (beneficial if compressed data is <=4KB -- maybe make this automatic?)
-// this is not compatible with endian swapping and probably not with unaligned reads
-//#define WFLZ_SHORT_WINDOW
-
-// some of these variables are limited by the types they are stored in, be careful if tweaking
-#ifdef WFLZ_SHORT_WINDOW
-
-	// size of wfLZ_Block, can't sizeof cuz padding
-	#define WFLZ_BLOCK_SIZE         3
-
-	// no point in compressing anything smaller than the block describing it
-	#define WFLZ_MIN_MATCH_LEN      ( WFLZ_BLOCK_SIZE + 1 )
-
-	// capped by max value of wfLZ_Block::length, + WFLZ_MIN_MATCH_LEN is free, requiring no extra bits
-	#define WFLZ_MAX_MATCH_LEN      ( 0x1fU-1 ) + WFLZ_MIN_MATCH_LEN
-
-	// capped by max value of wfLZ_Block::dist
-	// WFLZ_MAX_MATCH_DIST_FAST is the distance used by CompressFast, it can be useful to set WFLZ_MAX_MATCH_DIST lower than WFLZ_MAX_MATCH_DIST_FAST to speed up Compress()
-	#define WFLZ_MAX_MATCH_DIST      0x7ffU
-	#define WFLZ_MAX_MATCH_DIST_FAST 0x7ffU
-#else
-	#define WFLZ_BLOCK_SIZE          4
-	#define WFLZ_MIN_MATCH_LEN       ( WFLZ_BLOCK_SIZE + 1 ) 
-	#define WFLZ_MAX_MATCH_LEN       ( 0xffU-1 ) + WFLZ_MIN_MATCH_LEN
-	#define WFLZ_MAX_MATCH_DIST      0xffffU
-	#define WFLZ_MAX_MATCH_DIST_FAST 0xffffU
-#endif
+#define WFLZ_BLOCK_SIZE          4
+#define WFLZ_MIN_MATCH_LEN       ( WFLZ_BLOCK_SIZE + 1 ) 
+#define WFLZ_MAX_MATCH_LEN       ( 0xffU-1 ) + WFLZ_MIN_MATCH_LEN
+#define WFLZ_MAX_MATCH_DIST      0xffffU
+#define WFLZ_MAX_MATCH_DIST_FAST 0xffffU
 
 // capped by wfLZ_Block::numLiterals
 // this is the maximum length of uncompressible data, if this limit is reached, another block must be emitted
@@ -47,11 +25,17 @@
 // when using ChunkCompress() each block will be aligned to this -- makes PS3 SPU transfer convenient
 #define WFLZ_CHUNK_PAD               16
 
+#ifndef SPU
+	#define WF_LZ_UNALIGNED_ACCESS
+#endif
+
 //
 // End Config
 //
 
-// Thanks Daniel A. Newby (Corwinoid) for this bit
+typedef uintptr_t ireg_t;
+typedef intptr_t  ureg_t;
+
 #define WFLZ_LOG2_8BIT( v )  ( 8 - 90/(((v)/4+14)|1) - 2/((v)/2+1) )
 #define WFLZ_LOG2_16BIT( v ) ( 8*((v)>255) + WFLZ_LOG2_8BIT((v) >>8*((v)>255)) ) 
 #define WFLZ_LOG2_32BIT( v ) ( 16*((v)>65535L) + WFLZ_LOG2_16BIT((v)*1L >>16*((v)>65535L)) )
@@ -61,13 +45,8 @@
 
 typedef struct _wfLZ_Block
 {
-	#ifdef WFLZ_SHORT_WINDOW
-		uint16_t dist:11;  // how far to backtrack to memcpy
-		uint16_t length:5; // how much to memcpy ( +(WFLZ_MIN_MATCH_LEN-1) )
-	#else
-		uint16_t dist;
-		uint8_t length;
-	#endif
+	uint16_t dist;
+	uint8_t  length;
 	uint8_t  numLiterals;  // how many literals are there until the next wfLZ_Block
 } wfLZ_Block;
 
@@ -89,7 +68,7 @@ typedef struct _wfLZ_HeaderChunked
 
 typedef struct _wfLZ_ChunkDesc
 {
-	uint32_t	offset;
+	uint32_t offset;
 } wfLZ_ChunkDesc;
 
 typedef struct _wfLZ_DictEntry
@@ -154,7 +133,7 @@ uint32_t wfLZ_GetWorkMemSize()
 
 //! wfLZ_CompressFast()
 
-uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint8_t* const out, const uint8_t* workMem, const uint32_t swapEndian )
+uint32_t wfLZ_CompressFast( const uint8_t* WF_RESTRICT const in, const uint32_t inSize, uint8_t* WF_RESTRICT const out, const uint8_t* WF_RESTRICT workMem, const uint32_t swapEndian )
 {
 	wfLZ_Header header;
 	wfLZ_Block* block = &header.firstBlock;
@@ -165,10 +144,6 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 	wfLZ_DictEntry* dict = ( wfLZ_DictEntry* )workMem;
 
 	block->dist = block->length = 0;
-
-	#ifdef WFLZ_SHORT_WINDOW
-		if( swapEndian != 0 ) { abort(); } // endian swapping stuffs not set up for bit fields
-	#endif
 
 	WF_LZ_DBG_COMPRESS_FAST_INIT
 
@@ -194,9 +169,12 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 			++src, ++dst, --bytesLeft
 		)
 		{
-			uint32_t hash = WFLZ_HASHPTR( src );
-			if( hash == WFLZ_DICT_SIZE ) --hash;
-			dict[ hash ].inPos = src;
+			if( bytesLeft >= 4 )
+			{
+				uint32_t hash = WFLZ_HASHPTR( src );
+				if( hash == WFLZ_DICT_SIZE ) --hash;
+				dict[ hash ].inPos = src;
+			}
 			*dst = *src;
 			WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
 		}
@@ -205,19 +183,19 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 
 	//
 	{
-		while( bytesLeft )
+		while( bytesLeft >= 4 )
 		{
-			uint32_t hash = WFLZ_HASHPTR( src );
-			const uint8_t* matchPos;
+			const uint32_t tmp = WFLZ_HASHPTR( src );
+			const uint32_t hash = tmp == WFLZ_DICT_SIZE ? (tmp-1) : tmp ;
+			const uint8_t** dictEntry = &dict[ hash ].inPos;
+			const uint8_t* matchPos = *dictEntry;
 			const uint8_t* windowStart = src - WFLZ_MAX_MATCH_DIST_FAST;
 			uint32_t matchLength = 0;
 			const uint32_t maxMatchLen = WFLZ_MAX_MATCH_LEN > bytesLeft ? bytesLeft : WFLZ_MAX_MATCH_LEN ;
-			if( hash == WFLZ_DICT_SIZE ) --hash;
-			matchPos = dict[ hash ].inPos;
 
-			dict[ hash ].inPos = src;
+			*dictEntry = src;
 
-			// a match was found, figure ensure it really is a match (not a hash collision), and determine its length
+			// a match was found, ensure it really is a match and not a hash collision, and determine its length
 			if( matchPos != NULL && matchPos >= windowStart )
 			{
 				matchLength = wfLZ_MemCmp( src, matchPos, maxMatchLen );
@@ -268,6 +246,30 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 				++header.compressedSize;
 			}
 		}
+		// handle the last few bytes (avoid reading out of bounds)
+		/*
+		It's difficult to say whether we should bother with this, without it we can read up to 3 bytes OOB, but no sane allocator is gonna align the end of allocations to less...
+		*/
+		while( bytesLeft )
+		{
+			// if we've hit the max number of sequential literals, we need to output a compression block header
+			if( numLiterals == WFLZ_MAX_SEQUENTIAL_LITERALS )
+			{
+				block->numLiterals = ( uint8_t )numLiterals;
+				if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
+				block = ( wfLZ_Block* )dst;
+				dst += WFLZ_BLOCK_SIZE;
+				block->dist = block->length = 0;
+				numLiterals = 0;
+				header.compressedSize += WFLZ_BLOCK_SIZE;
+			}
+
+			++numLiterals;
+			--bytesLeft;
+			WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
+			*dst++ = *src++;
+			++header.compressedSize;
+		}
 	}
 
 	// append the 'end' block
@@ -295,7 +297,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint
 
 //! wfLZ_Compress()
 
-uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t* const out, const uint8_t* workMem, const uint32_t swapEndian )
+uint32_t wfLZ_Compress( const uint8_t* WF_RESTRICT const in, const uint32_t inSize, uint8_t* WF_RESTRICT const out, const uint8_t* WF_RESTRICT workMem, const uint32_t swapEndian )
 {
 	wfLZ_Header header;
 	wfLZ_Block* block = &header.firstBlock;
@@ -483,11 +485,11 @@ uint32_t wfLZ_GetCompressedSize( const uint8_t* const in )
 void wfLZ_Decompress( const uint8_t* WF_RESTRICT const in, uint8_t* WF_RESTRICT const out )
 {
 	wfLZ_Header* header = ( wfLZ_Header* )in;
-	uint8_t* dst = out;
-	const uint8_t* src = in + sizeof( wfLZ_Header );
-	uint8_t numLiterals = header->firstBlock.numLiterals;
+	uint8_t* WF_RESTRICT dst = out;
+	const uint8_t* WF_RESTRICT src = in + sizeof( wfLZ_Header );
+	ureg_t numLiterals = header->firstBlock.numLiterals;
 	wfLZ_Block* block;
-	uint16_t dist, len;
+	ureg_t dist, len;
 
 	WF_LZ_DBG_DECOMPRESS_INIT
 	WF_LZ_DBG_PRINT( "wfLZ_Decompress()\n" );
@@ -507,7 +509,7 @@ WF_LZ_LITERALS:
 WF_LZ_BLOCK:
 	block = ( wfLZ_Block* )src;
 	numLiterals = block->numLiterals;
-	#ifdef SPU // compensate for unaligned u16 reads
+	#ifndef WF_LZ_UNALIGNED_ACCESS
 		( (uint8_t*)&dist )[ 0 ] = ( (uint8_t*)&block->dist )[ 0 ];
 		( (uint8_t*)&dist )[ 1 ] = ( (uint8_t*)&block->dist )[ 1 ];
 	#else
@@ -517,10 +519,65 @@ WF_LZ_BLOCK:
 
 	if( len != 0 )
 	{
+	#ifdef WF_LZ_UNALIGNED_ACCESS
+		const uint8_t* WF_RESTRICT cpySrc = dst - dist;
 		len += WFLZ_MIN_MATCH_LEN - 1;
 		WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", dist, len );
-		wfLZ_MemCpy( dst, dst - dist, len );
-		dst += len;
+		if( len <= dist ) // no overlap
+		{
+			const ureg_t num8s = len/8;
+			ureg_t i;
+			for( i = 0; i != num8s; ++i )
+			{
+				*( (uint64_t*)dst ) = *( (uint64_t*)cpySrc );
+				dst    += 8;
+				cpySrc += 8;
+			}
+			switch( len % 8 )
+			{
+				case 0: break;
+				case 7: *dst++ = *cpySrc++;
+				case 6: *dst++ = *cpySrc++;
+				case 5: *dst++ = *cpySrc++;
+				case 4: *( (uint32_t*)dst ) = *( (uint32_t*)cpySrc ); dst += 4; cpySrc += 4; break;//*dst++ = *cpySrc++;
+				case 3: *dst++ = *cpySrc++;
+				case 2: *dst++ = *cpySrc++;
+				case 1: *dst++ = *cpySrc++;
+			}
+		}
+		else
+		{
+			ireg_t n = (len+7) / 8;
+			switch( len % 8 )
+			{
+				case 0: do { *dst++ = *cpySrc++;
+				case 7:      *dst++ = *cpySrc++;
+				case 6:      *dst++ = *cpySrc++;
+				case 5:      *dst++ = *cpySrc++;
+				case 4:      *dst++ = *cpySrc++;
+				case 3:      *dst++ = *cpySrc++;
+				case 2:      *dst++ = *cpySrc++;
+				case 1:      *dst++ = *cpySrc++;
+				} while( --n > 0 );
+			}
+		}
+#else
+		len += WFLZ_MIN_MATCH_LEN - 1;
+		WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", dist, len );
+		ireg_t n = (len+7) / 8;
+		switch( len % 8 )
+		{
+			case 0: do { *dst++ = *cpySrc++;
+			case 7:      *dst++ = *cpySrc++;
+			case 6:      *dst++ = *cpySrc++;
+			case 5:      *dst++ = *cpySrc++;
+			case 4:      *dst++ = *cpySrc++;
+			case 3:      *dst++ = *cpySrc++;
+			case 2:      *dst++ = *cpySrc++;
+			case 1:      *dst++ = *cpySrc++;
+			} while( --n > 0 );
+		}
+#endif
 	}
 	src += WFLZ_BLOCK_SIZE;
 
@@ -676,49 +733,105 @@ uint8_t* wfLZ_ChunkDecompressLoop( uint8_t* in, uint32_t** chunkDesc )
 
 /*!
 Utility functions below, not exposed publicly
-
-Thanks Daniel A. Newby (Corwinoid) for optimizing these!
 */
 
 //! wfLZ_MemCmp()
 /*!
-Deceptively named: the return value of this is *not* like strcmp/memcmp() -- it's just the number of sequential matching bytes, not some kind of diff
+Returns the number of sequential matching characters.  Not the same as memcmp!!!
 */
 
-#if 0
 uint32_t wfLZ_MemCmp( const uint8_t* a, const uint8_t* b, const uint32_t maxLen )
 {
+#ifdef WF_LZ_UNALIGNED_ACCESS
+	uint32_t matched = 0;
+	const uint32_t num8s = maxLen/8;
+	uint32_t i;
+	for( i = 0; i != num8s; ++i )
+	{
+		if( *((uint64_t*)a) == *((uint64_t*)b) )
+		{
+			matched += 8;
+			a += 8;
+			b += 8;
+		}
+		else
+		{
+			for( i = 0; i != 7; ++i )
+			{
+				if( *a != *b ) { break; }
+				++a;
+				++b;
+				++matched;
+			}
+			return matched;
+		}
+	}
+	{
+		const uint32_t remain = maxLen%8;
+		for( i = 0; i != remain; ++i )
+		{
+			if( *a != *b ) { break; }
+			++a;
+			++b;
+			++matched;
+		}
+	}
+	return matched;
+#else
 	uint32_t matched = 0;
 	while( *a++ == *b++ && matched < maxLen ) ++matched;
 	return matched;
-}
-#else // this depends on unaligned access, but it is only called during Compress() which has other issues on CPUs that care
-uint32_t wfLZ_MemCmp_i( const uint32_t* a, const uint32_t* b, const uint32_t count, const uint32_t maxLen )
-{
-	if( count >= maxLen ) return maxLen;
-	if( *a != *b )
-	{
-		uint32_t n = 0;
-		uint8_t *i = (uint8_t*)a, *j = (uint8_t*)b;
-		while( *i++ == *j++ && count + n < maxLen ) ++n;
-		return count + n;
-	}
-	return wfLZ_MemCmp_i( ++a, ++b, count + 4, maxLen );
-}
- 
-uint32_t wfLZ_MemCmp( const uint8_t* a, const uint8_t* b, const uint32_t maxLen )
-{
-	return wfLZ_MemCmp_i( (uint32_t*)a, (uint32_t*)b, 0, maxLen );
-}
 #endif
+}
 
 //! wfLZ_MemCpy()
 
 void wfLZ_MemCpy( uint8_t* dst, const uint8_t* src, const uint32_t size )
 {
-#if 0
+#if !defined WF_LZ_UNALIGNED_ACCESS
 	uint32_t i;
 	for( i = 0; i != size; ++i ) *dst++ = *src++;
+#elif 0// defined WF_LZ_UNALIGNED_ACCESS
+	if( src+size <= dst )
+	{
+		const uint32_t num8s = size/8;
+		uint32_t i;
+		for( i = 0; i != num8s; ++i )
+		{
+			*( ( uint64_t* )dst ) = *( ( uint64_t* )src );
+			dst += 8;
+			src += 8;
+		}
+		{
+			switch( size % 8 )
+			{
+				case 0: break;
+				case 7: *dst++ = *src++;
+				case 6: *dst++ = *src++;
+				case 5: *dst++ = *src++;
+				case 4: *dst++ = *src++;
+				case 3: *dst++ = *src++;
+				case 2: *dst++ = *src++;
+				case 1: *dst++ = *src++;
+			}
+		}
+	}
+	else
+	{
+		int32_t n = (size+7) / 8;
+		switch( size % 8 )
+		{
+			case 0: do {    *dst++ = *src++;
+			case 7:         *dst++ = *src++;
+			case 6:         *dst++ = *src++;
+			case 5:         *dst++ = *src++;
+			case 4:         *dst++ = *src++;
+			case 3:         *dst++ = *src++;
+			case 2:         *dst++ = *src++;
+			case 1:         *dst++ = *src++;
+			} while(--n > 0);
+		}
+	}
 #else
 	int32_t n = (size+7) / 8;
 	switch( size % 8 )

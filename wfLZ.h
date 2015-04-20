@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-#ifdef _MSC_VER
+#if defined _MSC_VER && _MSC_VER < 1600
 	#if _MSC_VER < 1300
 	   typedef signed   char  int8_t;
 	   typedef unsigned char  uint8_t;
@@ -24,12 +24,25 @@ extern "C" {
 	#endif
 	typedef signed   __int64 int64_t;
 	typedef unsigned __int64 uint64_t;
+	#if defined __x86_64 || defined __x86_64__ || defined _M_X64
+		typedef uint64_t uintptr_t;
+		typedef int64_t  intptr_t;
+	#else
+		typedef uint32_t uintptr_t;
+		typedef int32_t  intptr_t;
+	#endif
 #else
 	#include <stdint.h>
 #endif
-
+	
 #ifndef WF_RESTRICT
-	#define WF_RESTRICT
+	#if defined _MSC_VER || defined __ARMCC_VERSION || defined __GHS_VERSION_NUMBER || defined __GNUC__ || defined __psp2__
+		#define WF_RESTRICT __restrict
+	#elif __STDC_VERSION__ >= 19901L
+		#define WF_RESTRICT restrict
+	#else
+		#define WF_RESTRICT
+	#endif
 #endif
 
 //! wfLZ_GetMaxCompressedSize()
@@ -46,14 +59,15 @@ extern uint32_t wfLZ_GetWorkMemSize();
   (it takes advantage of a hash table to quickly find potential matches, although maybe not the best ones)
 * swapEndian = 0, compression and decompression are carried out on processors of the same endianness
 */
-uint32_t wfLZ_CompressFast( const uint8_t* const in, const uint32_t inSize, uint8_t* const out, const uint8_t* workMem, const uint32_t swapEndian );
+uint32_t wfLZ_CompressFast( const uint8_t* WF_RESTRICT const in, const uint32_t inSize, uint8_t* WF_RESTRICT const out, const uint8_t* WF_RESTRICT workMem, const uint32_t swapEndian );
 
 //! wfLZ_Compress()
 /*! Returns the size of the compressed data
+* This is mostly a reference compressor, it is quite slow.
 * Can't handle inSize == 0
 * TODO: restrict would be nice
 */
-extern uint32_t wfLZ_Compress( const uint8_t* const in, const uint32_t inSize, uint8_t* const out, const uint8_t* workMem, const uint32_t swapEndian );
+extern uint32_t wfLZ_Compress( const uint8_t* WF_RESTRICT const in, const uint32_t inSize, uint8_t* WF_RESTRICT const out, const uint8_t* WF_RESTRICT workMem, const uint32_t swapEndian );
 
 //! wfLZ_GetDecompressedSize()
 /*! Returns 0 if the data does not appear to be valid WFLZ */

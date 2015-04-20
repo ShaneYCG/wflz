@@ -33,9 +33,15 @@ uint64_t HashData( void* data, const size_t dataSize )
 	return hash;
 }
 
+void* Malloc( const size_t size )
+{
+	return malloc( size );
+	return malloc( (size+3)&(~0x3) ); // assume sane allocators pad allocations to four bytes
+}
+
 int main( int argc, char** argv )
 {
-	const char* in = argc == 2 ? argv[1] : "C:\\dev\\wflz-trunk\\example\\testdata\\shantae-idle.tga";
+	const char* in;
 
 	uint32_t hashCheck = 1;
 	uint64_t hashValue, hashValue2;
@@ -44,7 +50,14 @@ int main( int argc, char** argv )
 	uint8_t* uncompressed;
 	uint8_t* workMem;
 	uint8_t* compressed;
-	
+
+	if( argc < 2 )
+	{
+		printf( "Usage: wflz input_file" );
+		return 0;
+	}
+	in = argv[1];
+
 	printf( "\nwfLZ[%s]\n", in );
 	{
 		FILE* fh = fopen( in, "rb" );
@@ -55,7 +68,7 @@ int main( int argc, char** argv )
 		}
 		fseek( fh, 0, SEEK_END );
 		uncompressedSize = (uint32_t)ftell( fh );
-		uncompressed = (uint8_t*)malloc( uncompressedSize );
+		uncompressed = (uint8_t*)Malloc( uncompressedSize );
 		if( uncompressed == NULL )
 		{
 			fclose( fh );
@@ -72,25 +85,34 @@ int main( int argc, char** argv )
 		fclose( fh );
 	}
 
-	workMem = (uint8_t*)malloc( wfLZ_GetWorkMemSize() );
+	workMem = (uint8_t*)Malloc( wfLZ_GetWorkMemSize() );
 	if( workMem == NULL )
 	{
 		printf( "Error: Allocation failed.\n" );
 		return 0;
 	}
 
-	compressed = (uint8_t*)malloc( wfLZ_GetMaxCompressedSize( uncompressedSize ) );
+	compressed = (uint8_t*)Malloc( wfLZ_GetMaxCompressedSize( uncompressedSize ) );
 
 	hashValue = hashCheck ? HashData( uncompressed, uncompressedSize ) : 0 ;
 
-	compressedSize = wfLZ_CompressFast( uncompressed, uncompressedSize, compressed, workMem, 0 );
+//#define CAPTURING_PROFILE
+#ifdef CAPTURING_PROFILE
+	{ uint32_t i;
+	for( i = 0; i != 10000; ++i )
+	{
+#endif
+		compressedSize = wfLZ_CompressFast( uncompressed, uncompressedSize, compressed, workMem, 0 );
+
+		if( hashCheck ) { memset( uncompressed, 0, uncompressedSize ); }
+
+		wfLZ_Decompress( compressed, uncompressed );
+#ifdef CAPTURING_PROFILE
+	}}
+#endif
+
 	free( workMem );
-
-	if( hashCheck ) { memset( uncompressed, 0, uncompressedSize ); }
-
-	wfLZ_Decompress( compressed, uncompressed );
 	free( compressed );
-
 	hashValue2 = hashCheck ? HashData( uncompressed, uncompressedSize ) : 0 ;
 
 	free( uncompressed );
