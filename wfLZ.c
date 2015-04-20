@@ -138,7 +138,7 @@ uint32_t wfLZ_CompressFast( const uint8_t* WF_RESTRICT const in, const uint32_t 
 	wfLZ_Header header;
 	wfLZ_Block* block = &header.firstBlock;
 	uint8_t* dst = out + sizeof( wfLZ_Header );
-	const uint8_t* src = in;
+	const uint8_t* WF_RESTRICT src = in;
 	uint32_t bytesLeft = inSize;
 	uint32_t numLiterals;
 	wfLZ_DictEntry* dict = ( wfLZ_DictEntry* )workMem;
@@ -181,76 +181,50 @@ uint32_t wfLZ_CompressFast( const uint8_t* WF_RESTRICT const in, const uint32_t 
 		numLiterals = src - in;
 	}
 
-	//
+	// iterate through input bytes
+	while( bytesLeft > WFLZ_MIN_MATCH_LEN )
 	{
-		while( bytesLeft >= 4 )
+		const uint32_t tmp = WFLZ_HASHPTR( src );
+		const uint32_t hash = tmp == WFLZ_DICT_SIZE ? (tmp-1) : tmp ;
+		const uint8_t** dictEntry = &dict[ hash ].inPos;
+		const uint8_t* matchPos = *dictEntry;
+		const uint8_t* windowStart = src - WFLZ_MAX_MATCH_DIST_FAST;
+		uint32_t matchLength = 0;
+		const uint32_t maxMatchLen = WFLZ_MAX_MATCH_LEN > bytesLeft ? bytesLeft : WFLZ_MAX_MATCH_LEN ;
+
+		*dictEntry = src;
+
+		// a match was found, ensure it really is a match and not a hash collision, and determine its length
+		if( matchPos != NULL && matchPos >= windowStart )
 		{
-			const uint32_t tmp = WFLZ_HASHPTR( src );
-			const uint32_t hash = tmp == WFLZ_DICT_SIZE ? (tmp-1) : tmp ;
-			const uint8_t** dictEntry = &dict[ hash ].inPos;
-			const uint8_t* matchPos = *dictEntry;
-			const uint8_t* windowStart = src - WFLZ_MAX_MATCH_DIST_FAST;
-			uint32_t matchLength = 0;
-			const uint32_t maxMatchLen = WFLZ_MAX_MATCH_LEN > bytesLeft ? bytesLeft : WFLZ_MAX_MATCH_LEN ;
-
-			*dictEntry = src;
-
-			// a match was found, ensure it really is a match and not a hash collision, and determine its length
-			if( matchPos != NULL && matchPos >= windowStart )
-			{
-				matchLength = wfLZ_MemCmp( src, matchPos, maxMatchLen );
-			}
-			if( matchLength >= WFLZ_MIN_MATCH_LEN )
-			{
-				const uint32_t matchDist = src - matchPos;
-
-				block->numLiterals = ( uint8_t )numLiterals;
-				if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
-				block = ( wfLZ_Block* )dst;
-				bytesLeft -= matchLength;
-				dst += WFLZ_BLOCK_SIZE;
-				src += matchLength;
-				block->dist = ( uint16_t )matchDist;
-				block->length = ( uint8_t )( matchLength - WFLZ_MIN_MATCH_LEN + 1 );
-				numLiterals = 0;
-
-				WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", matchDist, matchLength );
-				#ifdef WF_LZ_DBG
-					wfLZ_totalBackTrackDist += matchDist;
-					wfLZ_totalBackTrackLength += matchLength;
-					++wfLZ_numBackTracks;
-				#endif
-
-				header.compressedSize += WFLZ_BLOCK_SIZE;
-			}
-
-			// output a literal byte: no entries for this position found, entry is too far away, entry was a hash collision, or the entry did not meet the minimum match length
-			else
-			{
-				// if we've hit the max number of sequential literals, we need to output a compression block header
-				if( numLiterals == WFLZ_MAX_SEQUENTIAL_LITERALS )
-				{
-					block->numLiterals = ( uint8_t )numLiterals;
-					if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
-					block = ( wfLZ_Block* )dst;
-					dst += WFLZ_BLOCK_SIZE;
-					block->dist = block->length = 0;
-					numLiterals = 0;
-					header.compressedSize += WFLZ_BLOCK_SIZE;
-				}
-
-				++numLiterals;
-				--bytesLeft;
-				WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
-				*dst++ = *src++;
-				++header.compressedSize;
-			}
+			matchLength = wfLZ_MemCmp( src, matchPos, maxMatchLen );
 		}
-		// handle the last few bytes (avoid reading out of bounds)
-		/*
-		It's difficult to say whether we should bother with this, without it we can read up to 3 bytes OOB, but no sane allocator is gonna align the end of allocations to less...
-		*/
-		while( bytesLeft )
+		if( matchLength >= WFLZ_MIN_MATCH_LEN )
+		{
+			const uint32_t matchDist = src - matchPos;
+
+			block->numLiterals = ( uint8_t )numLiterals;
+			if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
+			block = ( wfLZ_Block* )dst;
+			bytesLeft -= matchLength;
+			dst += WFLZ_BLOCK_SIZE;
+			src += matchLength;
+			block->dist = ( uint16_t )matchDist;
+			block->length = ( uint8_t )( matchLength - WFLZ_MIN_MATCH_LEN + 1 );
+			numLiterals = 0;
+
+			WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", matchDist, matchLength );
+			#ifdef WF_LZ_DBG
+				wfLZ_totalBackTrackDist += matchDist;
+				wfLZ_totalBackTrackLength += matchLength;
+				++wfLZ_numBackTracks;
+			#endif
+
+			header.compressedSize += WFLZ_BLOCK_SIZE;
+		}
+
+		// output a literal byte: no entries for this position found, entry is too far away, entry was a hash collision, or the entry did not meet the minimum match length
+		else
 		{
 			// if we've hit the max number of sequential literals, we need to output a compression block header
 			if( numLiterals == WFLZ_MAX_SEQUENTIAL_LITERALS )
@@ -270,6 +244,27 @@ uint32_t wfLZ_CompressFast( const uint8_t* WF_RESTRICT const in, const uint32_t 
 			*dst++ = *src++;
 			++header.compressedSize;
 		}
+	}
+	// output final few bytes as literals, these are not worth compressing
+	while( bytesLeft )
+	{
+		// if we've hit the max number of sequential literals, we need to output a compression block header
+		if( numLiterals == WFLZ_MAX_SEQUENTIAL_LITERALS )
+		{
+			block->numLiterals = ( uint8_t )numLiterals;
+			if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
+			block = ( wfLZ_Block* )dst;
+			dst += WFLZ_BLOCK_SIZE;
+			block->dist = block->length = 0;
+			numLiterals = 0;
+			header.compressedSize += WFLZ_BLOCK_SIZE;
+		}
+
+		++numLiterals;
+		--bytesLeft;
+		WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
+		*dst++ = *src++;
+		++header.compressedSize;
 	}
 
 	// append the 'end' block
@@ -302,7 +297,7 @@ uint32_t wfLZ_Compress( const uint8_t* WF_RESTRICT const in, const uint32_t inSi
 	wfLZ_Header header;
 	wfLZ_Block* block = &header.firstBlock;
 	uint8_t* dst = out + sizeof( wfLZ_Header );
-	const uint8_t* src = in;
+	const uint8_t* WF_RESTRICT src = in;
 	uint32_t bytesLeft = inSize;
 	uint32_t numLiterals = 0;
 	wfLZ_DictEntry* dict = ( wfLZ_DictEntry* )workMem;
@@ -342,7 +337,7 @@ uint32_t wfLZ_Compress( const uint8_t* WF_RESTRICT const in, const uint32_t inSi
 	}
 
 	// iterate through input bytes
-	while( bytesLeft )
+	while( bytesLeft > WFLZ_MIN_MATCH_LEN )
 	{
 		const uint8_t* windowEnd = src - 1;
 		const uint8_t* window = windowEnd;
@@ -423,6 +418,28 @@ uint32_t wfLZ_Compress( const uint8_t* WF_RESTRICT const in, const uint32_t inSi
 			*dst++ = *src++;
 			++header.compressedSize;
 		}
+	}
+
+	// output final few bytes as literals, these are not worth compressing
+	while( bytesLeft )
+	{
+		// if we've hit the max number of sequential literals, we need to output a compression block header
+		if( numLiterals == WFLZ_MAX_SEQUENTIAL_LITERALS )
+		{
+			block->numLiterals = ( uint8_t )numLiterals;
+			if( swapEndian != 0 ){ wfLZ_EndianSwap16( &block->dist ); }
+			block = ( wfLZ_Block* )dst;
+			dst += WFLZ_BLOCK_SIZE;
+			block->dist = block->length = 0;
+			numLiterals = 0;
+			header.compressedSize += WFLZ_BLOCK_SIZE;
+		}
+
+		++numLiterals;
+		--bytesLeft;
+		WF_LZ_DBG_PRINT( "  literal [0x%02X] [%c]\n", *src, *src );
+		*dst++ = *src++;
+		++header.compressedSize;
 	}
 
 	// append the 'end' block
@@ -535,7 +552,6 @@ WF_LZ_BLOCK:
 			}
 			switch( len % 8 )
 			{
-				case 0: break;
 				case 7: *dst++ = *cpySrc++;
 				case 6: *dst++ = *cpySrc++;
 				case 5: *dst++ = *cpySrc++;
@@ -543,6 +559,7 @@ WF_LZ_BLOCK:
 				case 3: *dst++ = *cpySrc++;
 				case 2: *dst++ = *cpySrc++;
 				case 1: *dst++ = *cpySrc++;
+				case 0: break;
 			}
 		}
 		else
@@ -561,7 +578,7 @@ WF_LZ_BLOCK:
 				} while( --n > 0 );
 			}
 		}
-#else
+	#else
 		len += WFLZ_MIN_MATCH_LEN - 1;
 		WF_LZ_DBG_PRINT( "  backtrack [%u] len [%u]\n", dist, len );
 		ireg_t n = (len+7) / 8;
@@ -577,7 +594,7 @@ WF_LZ_BLOCK:
 			case 1:      *dst++ = *cpySrc++;
 			} while( --n > 0 );
 		}
-#endif
+	#endif
 	}
 	src += WFLZ_BLOCK_SIZE;
 
