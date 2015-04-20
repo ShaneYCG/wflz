@@ -36,7 +36,7 @@ extern "C" {
 #endif
 	
 #ifndef WF_RESTRICT
-	#if defined _MSC_VER || defined __ARMCC_VERSION || defined __GHS_VERSION_NUMBER || defined __GNUC__ || defined __psp2__
+	#if defined _MSC_VER || defined __ARMCC_VERSION || defined __GHS_VERSION_NUMBER || defined __GNUC__ || defined __psp2__ || defined __SNC__
 		#define WF_RESTRICT __restrict
 	#elif __STDC_VERSION__ >= 19901L
 		#define WF_RESTRICT restrict
