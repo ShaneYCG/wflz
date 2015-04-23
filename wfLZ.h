@@ -7,23 +7,14 @@ extern "C" {
 #endif
 
 #if defined _MSC_VER && _MSC_VER < 1600
-	#if _MSC_VER < 1300
-	   typedef signed   char  int8_t;
-	   typedef unsigned char  uint8_t;
-	   typedef signed   short int16_t;
-	   typedef unsigned short uint16_t;
-	   typedef signed   int   int32_t;
-	   typedef unsigned int   uint32_t;
-	#else
-	   typedef signed   __int8  int8_t;
-	   typedef unsigned __int8  uint8_t;
-	   typedef signed   __int16 int16_t;
-	   typedef unsigned __int16 uint16_t;
-	   typedef signed   __int32 int32_t;
-	   typedef unsigned __int32 uint32_t;
-	#endif
-	typedef signed   __int64 int64_t;
-	typedef unsigned __int64 uint64_t;
+	typedef signed char        int8_t;
+	typedef short              int16_t;
+	typedef int                int32_t;
+	typedef long long          int64_t;
+	typedef unsigned char      uint8_t;
+	typedef unsigned short     uint16_t;
+	typedef unsigned int       uint32_t;
+	typedef unsigned long long uint64_t;
 	#if defined __x86_64 || defined __x86_64__ || defined _M_X64
 		typedef uint64_t uintptr_t;
 		typedef int64_t  intptr_t;
@@ -55,17 +46,14 @@ extern uint32_t wfLZ_GetWorkMemSize();
 
 //! wfLZ_CompressFast()
 /* Returns the size of the compressed data
-* CompressFast greatly speeds up compression, but potentially reduces compression ratio
-  (it takes advantage of a hash table to quickly find potential matches, although maybe not the best ones)
+* CompressFast greatly speeds up compression, but potentially reduces compression ratio.
 * swapEndian = 0, compression and decompression are carried out on processors of the same endianness
 */
 uint32_t wfLZ_CompressFast( const uint8_t* WF_RESTRICT const in, const uint32_t inSize, uint8_t* WF_RESTRICT const out, const uint8_t* WF_RESTRICT workMem, const uint32_t swapEndian );
 
 //! wfLZ_Compress()
 /*! Returns the size of the compressed data
-* This is mostly a reference compressor, it is quite slow.
-* Can't handle inSize == 0
-* TODO: restrict would be nice
+* This is mostly a reference compressor, it is extremely slow.
 */
 extern uint32_t wfLZ_Compress( const uint8_t* WF_RESTRICT const in, const uint32_t inSize, uint8_t* WF_RESTRICT const out, const uint8_t* WF_RESTRICT workMem, const uint32_t swapEndian );
 
@@ -82,10 +70,20 @@ extern uint32_t wfLZ_GetCompressedSize( const uint8_t* const in );
 extern void wfLZ_Decompress( const uint8_t* WF_RESTRICT const in, uint8_t* WF_RESTRICT const out );
 
 //! wfLZ_GetHeaderSize()
-/*!
-* Returns 0 if data appears invalid
-*/
+/*! Returns 0 if the data does not appear to be valid WFLZ */
 uint32_t wfLZ_GetHeaderSize( const uint8_t* const in );
+
+/*! Example Usage
+	uint8_t* workMem = ( uint8_t* )malloc( wfLZ_GetWorkMemSize() );
+	uint8_t* compressed = ( uint8_t* )malloc( wfLZ_GetMaxCompressedSize( decompressedSize ) );
+	uint32_t compressedSize = wfLZ_CompressFast( decompressed, decompressedSize, compressed, workMem, 0 );
+
+	....
+
+	uint32_t decompressedSize = wfLZ_GetDecompressedSize( compressed );
+	uint8_t* decompressed = ( uint8_t* )malloc( decompressedSize );
+	wfLZ_Decompress( compressed, decompressed );
+*/
 
 //! Chunk-based Compression
 /*!
@@ -111,16 +109,31 @@ extern uint32_t wfLZ_ChunkCompress( uint8_t* in, const uint32_t inSize, const ui
 uint32_t wfLZ_GetNumChunks( const uint8_t* const in );
 
 //! wfLZ_ChunkDecompressCallback()
-/*!
-* TODO: document how the fuck to use this
-* TODO: const correctness would be nice
+/*! Example Usage
+	void ChunkCB( void* block )
+	{
+		uint32_t decompressedSize = wfLZ_GetDecompressedSize( compressed );
+		uint8_t* decompressed = ( uint8_t* )malloc( decompressedSize );
+		wfLZ_Decompress( block, decompressed );
+	}
+	uint8_t* chunkCompressedData = wfLZ_ChunkCompress( ... );
+	wfLZ_ChunkDecompressCallback( chunkCompressedData, ChunkCB );
+
 */
 void wfLZ_ChunkDecompressCallback( uint8_t* in, void( *chunkCallback )( void* ) );
 
 //! wfLZ_ChunkDecompressLoop()
-/*!
-* TODO: document how the fuck to use this
-* TODO: const correctness would be nice
+/*! Example Usage
+	uint8_t* chunkCompressedData = wfLZ_ChunkCompress( ... );
+	uint32_t decompressedSize = wfLZ_GetDecompressedSize( compressed );
+	uint8_t* decompressed = ( uint8_t* )malloc( decompressedSize );
+	uint32_t* chunk = NULL;
+	while( uint8_t* compressedBlock = wfLZ_ChunkDecompressLoop( chunkCompressedData, &chunk ) )
+	{
+		wfLZ_Decompress( compressedBlock, decompressed );
+		const u32 blockSize = wfLZ_GetDecompressedSize( compressedBlock );
+		decompressed += blockSize;
+	}
 */
 uint8_t* wfLZ_ChunkDecompressLoop( uint8_t* in, uint32_t** chunkDesc );
 
@@ -129,18 +142,3 @@ uint8_t* wfLZ_ChunkDecompressLoop( uint8_t* in, uint32_t** chunkDesc );
 #endif
 
 #endif // WF_LZ_H
-
-//! Example Usage
-/*!
-
-uint8_t* workMem = ( uint8_t* )malloc( wfLZ_GetWorkMemSize() );
-uint8_t* compressed = ( uint8_t* )malloc( wfLZ_GetMaxCompressedSize( decompressedSize ) );
-uint32_t compressedSize = wfLZ_CompressFast( decompressed, decompressedSize, compressed, workMem, 0 );
-
-....
-
-uint32_t decompressedSize = wfLZ_GetDecompressedSize( compressed );
-uint8_t* decompressed = ( uint8_t* )malloc( decompressedSize );
-wfLZ_Decompress( compressed, decompressed );
-
-*/
