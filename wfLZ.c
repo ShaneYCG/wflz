@@ -19,7 +19,7 @@
 // when using ChunkCompress() each block will be aligned to this -- makes PS3 SPU transfer convenient
 #define WFLZ_CHUNK_PAD 16
 
-#ifndef SPU
+#if !defined(SPU) && !defined(WF_LZ_NO_UNALIGNED_ACCESS)
 	#define WF_LZ_UNALIGNED_ACCESS
 #endif
 
